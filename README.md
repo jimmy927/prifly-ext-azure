@@ -16,7 +16,7 @@ Read-only. Nothing here changes Azure.
   - `azure_get`: one resource by its ARM id, with the newest stable api-version.
   - `azure_cost`: actual cost of a subscription, daily or grouped by resource group, service or resource.
 - **The launcher "From an Azure resource…"**: a board of the shown subscription's resources, one column per resource group, after a column of the deployments that failed in the last day. A picked resource starts a session that already knows it, its group's recent deployments and its last day of Activity Log. Granting Azure access, signing a tenant in again and switching subscription are rows on the same board.
-- **A status-bar chip**: which account and tenant Azure is read as, warning when a tenant needs signing in again.
+- **Nothing in the status bar.** Whether access is granted, and which account and tenant Azure is read as, is on the board.
 - **A light watch**: every fifteen minutes, failed deployments, 25 resource groups per round. A new failure lights the launcher and shows a notice.
 
 ## Access
@@ -43,6 +43,6 @@ The types come from `@prifly/extension-api`, at a tag of `jimmy927/prifly-extens
 | `context.ts` | The chosen account, tenants and subscriptions (kept ten minutes), the shown subscription |
 | `tools.ts` | The five session tools |
 | `board.ts` / `describe.ts` | The launcher's board, its setup rows, and what a picked resource or deployment says |
-| `watch.ts` | The fifteen-minute watch and the status-bar chip |
+| `watch.ts` | The fifteen-minute watch of failed deployments |
 | `results.ts` | The words for each kind of failure |
 | `test/fake-arm.ts` | A fake ARM behind a fake `api.connections`: two tenants, one guest, and the ways it can fail |

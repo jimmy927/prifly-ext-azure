@@ -77,26 +77,21 @@ test("a failure older than a day is not shown; none left puts the launcher's glo
   expect(run.fake.flags.get(LAUNCHER)).toBeNull();
 });
 
-test("without Azure access the watch reads nothing and the chip asks for it", async () => {
+test("without Azure access the watch reads nothing and puts nothing in the status bar", async () => {
   const run = setUp({ scopes: ["User.Read"] });
   await run.watcher.round();
   expect(run.arm.sent).toEqual([]);
-  expect(run.fake.shown.at(-1)?.statusBar).toMatchObject([
-    { key: "azure", label: "Azure · grant access", tone: "muted" },
-  ]);
+  expect(run.fake.shown.length).toBeGreaterThan(0);
+  expect(run.fake.shown.every((each) => each.statusBar.length === 0)).toBe(true);
 });
 
-test("the chip names the account and tenant, and warns for a tenant to sign in again", async () => {
-  const fine = setUp();
-  await fine.watcher.round();
-  expect(fine.fake.shown.at(-1)?.statusBar).toMatchObject([
-    { label: "Azure · jimmy@northwind.example · Northwind Retail", tone: "good" },
-  ]);
-  const guest = setUp({ deadTenants: [GUEST] });
-  await guest.watcher.round();
-  expect(guest.fake.shown.at(-1)?.statusBar).toMatchObject([
-    { label: "Azure · jimmy@northwind.example · 1 tenant to sign in", tone: "warning" },
-  ]);
+test("the status bar stays empty when access is fine and when a tenant needs signing in", async () => {
+  for (const options of [{}, { deadTenants: [GUEST] }]) {
+    const run = setUp(options);
+    await run.watcher.round();
+    expect(run.fake.shown.length).toBeGreaterThan(0);
+    expect(run.fake.shown.every((each) => each.statusBar.length === 0)).toBe(true);
+  }
 });
 
 test("the board: failed deployments first, a column per resource group, setup rows above", async () => {
@@ -127,6 +122,7 @@ test("the board: failed deployments first, a column per resource group, setup ro
 test("without Azure access the launcher offers Grant Azure access, which asks for the ARM scope", async () => {
   const run = setUp({ scopes: ["User.Read"] });
   expect(await run.board.choices("")).toMatchObject([
+    { key: "setup:retry", title: "Azure access is not granted", tone: "muted" },
     { key: "setup:grant", title: "Grant Azure access" },
   ]);
   const launched = await run.board.launch("setup:grant");
@@ -134,6 +130,16 @@ test("without Azure access the launcher offers Grant Azure access, which asks fo
   expect(run.arm.signIns).toEqual([{ scopes: [ARM_SCOPE], options: { connection: "ms-1" } }]);
   const board = await run.board.choices("");
   expect(isBoard(board)).toBe(true);
+});
+
+test("with access granted the board carries no grant-access line", async () => {
+  const run = setUp();
+  const board = await run.board.choices("");
+  if (!isBoard(board)) throw new Error("expected a board");
+  const rows = [...board.items, ...(board.actions ?? [])];
+  expect(rows.some((row) => row.key === "setup:grant" || row.title.includes("not granted"))).toBe(
+    false,
+  );
 });
 
 test("signing a tenant in again asks for that tenant, and the board reads it again", async () => {

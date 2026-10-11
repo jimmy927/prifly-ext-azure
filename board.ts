@@ -84,6 +84,11 @@ function failureRows(failure: ArmFailure): LaunchChoice[] {
     case "not-granted":
       return [
         setupRow(
+          "setup:retry",
+          "Azure access is not granted",
+          `${failure.account} has not granted it yet, so nothing of Azure is read.`,
+        ),
+        setupRow(
           "setup:grant",
           "Grant Azure access",
           `${failure.account} signs in once more and approves reading Azure.`,

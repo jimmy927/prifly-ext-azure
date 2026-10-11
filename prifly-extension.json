@@ -1,7 +1,7 @@
 {
   "id": "azure",
   "name": "Azure",
-  "description": "Your Azure tenants, subscriptions and resources in prifly, read through your connected Microsoft account: read-only tools for every session, a board to start a session from a resource or a failed deployment, and a status-bar chip. No az CLI needed.",
+  "description": "Your Azure tenants, subscriptions and resources in prifly, read through your connected Microsoft account: read-only tools for every session, a board to start a session from a resource or a failed deployment. No az CLI needed.",
   "version": "0.1.0",
   "main": "index.ts",
   "connections": [

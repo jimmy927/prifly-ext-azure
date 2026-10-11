@@ -1,7 +1,7 @@
 /**
  * The light background work: failed deployments, checked every fifteen
- * minutes a few resource groups at a time, and the status-bar chip that says
- * which account and tenant Azure is read as.
+ * minutes a few resource groups at a time. Nothing of Azure goes in the status
+ * bar; whether access is granted is said on the launch board (`board.ts`).
  *
  * Failures from the last 24 hours light the launcher and fill the board's
  * first column; each one that is new since the last round is a notice. The
@@ -9,8 +9,8 @@
  * old notices.
  */
 
-import type { Decoration, ExtensionApi } from "@prifly/extension-api";
-import type { ArmClient, ArmFailure } from "./arm";
+import type { ExtensionApi } from "@prifly/extension-api";
+import type { ArmClient } from "./arm";
 import { type Deployment, deployments, resourceGraph } from "./azure";
 import type { AzureContext, Reach } from "./context";
 
@@ -51,18 +51,15 @@ export class Watcher {
   }
 
   async round(): Promise<void> {
+    // An empty status bar, every round: it also clears a chip an older version left.
+    this.api.show({}, []);
     const client = this.context.client();
     if (!client.ok) {
-      this.chip(null, [], client.failure);
       this.api.flag(LAUNCHER, null);
       return;
     }
     const reach = await this.context.reach(client.value);
-    if (!reach.ok) {
-      this.chip(client.value, [], reach.failure);
-      return;
-    }
-    this.chip(client.value, reach.value, null);
+    if (!reach.ok) return;
     const groups = await this.groups(client.value, reach.value);
     const scanned = this.slice(groups);
     for (const group of scanned) await this.scan(client.value, group);
@@ -157,60 +154,4 @@ export class Watcher {
           },
     );
   }
-
-  private chip(arm: ArmClient | null, reach: Reach[], failure: ArmFailure | null): void {
-    const shown = chipOf(arm, reach, failure, this.context);
-    this.api.show({}, shown === null ? [] : [shown]);
-  }
-}
-
-/** The status-bar chip: who Azure is read as, and in which tenant; null when nothing is connected. */
-export function chipOf(
-  arm: ArmClient | null,
-  reach: Reach[],
-  failure: ArmFailure | null,
-  context: AzureContext,
-): Decoration | null {
-  const base = { key: "azure", icon: "azure" as const, url: "https://portal.azure.com/" };
-  if (failure?.kind === "not-connected") return null;
-  if (failure?.kind === "not-granted") {
-    return {
-      ...base,
-      label: "Azure · grant access",
-      tone: "muted",
-      details: [
-        `${failure.account} has not granted Azure access yet.`,
-        "Grant it from From an Azure resource….",
-      ],
-    };
-  }
-  if (failure?.kind === "needs-sign-in" && failure.tenant === null) {
-    return {
-      ...base,
-      label: "Azure · sign in again",
-      tone: "warning",
-      details: [`The Microsoft sign-in for ${failure.account} ended.`],
-    };
-  }
-  const account = arm?.connection.account ?? "";
-  const shown = context.shown(reach);
-  const tenant = shown === null ? null : context.tenantOf(reach, shown.id);
-  const dead = arm?.tenantsNeedingSignIn() ?? [];
-  const label =
-    dead.length > 0
-      ? `Azure · ${account} · ${dead.length} tenant${dead.length === 1 ? "" : "s"} to sign in`
-      : `Azure · ${account}${tenant === null ? "" : ` · ${tenant.name}`}`;
-  const details = [
-    `Read as ${account}.`,
-    ...reach.map(
-      (each) =>
-        `${each.tenant.name}: ${each.subscriptions.length} subscription${each.subscriptions.length === 1 ? "" : "s"}${dead.includes(each.tenant.id) ? " (sign in again)" : ""}`,
-    ),
-  ];
-  return {
-    ...base,
-    label,
-    tone: dead.length > 0 || failure !== null ? "warning" : "good",
-    details,
-  };
 }
