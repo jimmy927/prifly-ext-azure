@@ -1,39 +1,69 @@
 /**
- * The template extension: what prifly imports. `activate` is given the api
- * and registers the extension's MCP tool; the other exports answer the
- * launcher (`choices`, `launch`) and the panel (`panel`) the manifest
- * declares. Types come from `@prifly/extension-api` with `import type`, so
- * nothing of it is loaded at run time.
+ * The Azure extension: what prifly imports. `activate` registers the
+ * read-only `azure_*` tools and starts the fifteen-minute watch of failed
+ * deployments; `choices`, `open` and `launch` answer the launcher
+ * "From an Azure resource…". Types come from `@prifly/extension-api` with
+ * `import type`, so nothing of it is loaded at run time.
  */
 
-import type { ExtensionApi, Launch, LaunchBoard, PanelRequest } from "@prifly/extension-api";
-import { board, launchOf, THINGS } from "./things";
-import { whoAmITool } from "./whoami-tool";
+import type {
+  ExtensionApi,
+  Launch,
+  LaunchBoard,
+  LaunchChoice,
+  LaunchItem,
+  SettingValues,
+} from "@prifly/extension-api";
+import { Board } from "./board";
+import { AzureContext } from "./context";
+import { azureTools } from "./tools";
+import { ROUND_MS, Watcher } from "./watch";
 
-let api: ExtensionApi | null = null;
+type Running = { board: Board; watcher: Watcher };
 
-export function activate(given: ExtensionApi): () => void {
-  api = given;
+let running: Running | null = null;
+
+function settingOf(values: SettingValues | undefined): string {
+  const value = values?.["subscription"];
+  return typeof value === "string" ? value : "";
+}
+
+export function activate(api: ExtensionApi): () => void {
+  const context = new AzureContext(() => api.connections);
+  context.useSetting(settingOf(api.settings));
+  api.onSettings?.((values) => context.useSetting(settingOf(values)));
+  const watcher = new Watcher(api, context);
+  const board = new Board(context, watcher, () => api.connections);
+  running = { board, watcher };
   // Absent on an older prifly: optional, like every part added after the first version.
-  given.tools?.register([whoAmITool(() => api?.connections)]);
-  given.log("activated", { things: THINGS.length });
+  api.tools?.register(azureTools(context));
+  const round = () => {
+    watcher.round().catch((error: unknown) => {
+      api.log("watch_failed", { message: error instanceof Error ? error.message : String(error) });
+    });
+  };
+  round();
+  const timer = setInterval(round, ROUND_MS);
+  api.log("activated", { connections: api.connections === undefined ? "absent" : "present" });
   return () => {
-    api = null;
+    clearInterval(timer);
+    running = null;
   };
 }
 
-/** The launcher `things`: its board, narrowed by what the reader typed. */
-export function choices(_launchId: string, query: string): LaunchBoard {
-  return board(query);
+function current(): Running {
+  if (running === null) throw new Error("The Azure extension is not running.");
+  return running;
 }
 
-/** The session a picked thing starts. */
-export function launch(_launchId: string, key: string, input: string): Launch {
-  return launchOf(key, input);
+export function choices(_launchId: string, query: string): Promise<LaunchBoard | LaunchChoice[]> {
+  return current().board.choices(query);
 }
 
-/** What the panel's page asks for at `api/<path>`; answered as JSON. */
-export function panel(_panelId: string, request: PanelRequest): unknown {
-  if (request.path === "things") return { things: THINGS };
-  throw new Error(`Nothing at api/${request.path}`);
+export function open(_launchId: string, key: string): Promise<LaunchItem> {
+  return current().board.open(key);
+}
+
+export function launch(_launchId: string, key: string): Promise<Launch> {
+  return current().board.launch(key);
 }

@@ -1,33 +1,33 @@
 {
-  "id": "template",
-  "name": "Template",
-  "description": "A minimal prifly extension to start a plugin from: one MCP tool, one launch board, one panel.",
+  "id": "azure",
+  "name": "Azure",
+  "description": "Your Azure tenants, subscriptions and resources in prifly, read through your connected Microsoft account: read-only tools for every session, a board to start a session from a resource or a failed deployment, and a status-bar chip. No az CLI needed.",
   "version": "0.1.0",
   "main": "index.ts",
   "connections": [
     {
       "provider": "microsoft",
-      "scopes": ["User.Read"],
-      "why": "Reads your name, to show which account the template's tool uses."
+      "scopes": ["https://management.azure.com/user_impersonation"],
+      "optional": true,
+      "why": "Reads your Azure tenants, subscriptions, resources, deployments, Activity Log and costs. Read-only: it changes nothing in Azure. Asked for only when you pick Grant Azure access on the board."
     }
   ],
   "launch": [
     {
-      "id": "things",
-      "label": "Template things",
-      "icon": "box",
-      "description": "Start a session from one of the template's things",
-      "searchPlaceholder": "Search things"
+      "id": "resource",
+      "label": "From an Azure resource…",
+      "icon": "cloud",
+      "description": "Resources across your subscriptions, failed deployments first. The session starts knowing the resource, its recent deployments and its Activity Log. Granting access and switching subscription happen here too.",
+      "searchPlaceholder": "Filter by name, type, resource group, location or tag…"
     }
   ],
-  "panels": [
+  "settings": [
     {
-      "id": "things",
-      "label": "Template",
-      "icon": "box",
-      "description": "The template's things, in a window of its own",
-      "folder": "panel",
-      "page": "index.html"
+      "id": "subscription",
+      "label": "Subscription to show",
+      "description": "Its name or id. Left empty, the board shows the one you last picked there, else the first enabled one.",
+      "type": "string",
+      "default": ""
     }
   ]
 }

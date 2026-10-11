@@ -1,70 +1,48 @@
-# prifly-ext-template
+# prifly-ext-azure
 
-A minimal prifly extension to start a plugin from: one MCP tool that uses a
-connected account, one launch board, one panel, and tests of each against a
-fake `api`.
+Your Azure tenants, subscriptions and resources in prifly, read through the
+Microsoft account you connected in prifly's Vault → Connections. Nothing to
+install and no `az` CLI: every call is Azure Resource Manager over HTTPS, and
+prifly holds the token.
 
-## Start a plugin from it
+Read-only. Nothing here changes Azure.
 
-1. Copy the folder to a repository of its own, beside your prifly checkout:
+## What it gives you
 
-   ```sh
-   cp -r ~/src/prifly/templates/prifly-ext-template ~/src/prifly-ext-<name>
-   cd ~/src/prifly-ext-<name> && git init -b main
-   ```
+- **Tools for every session** (`mcp__prifly__azure_*`):
+  - `azure_tenants`: the tenants your account reaches, and any that needs a fresh sign-in.
+  - `azure_subscriptions`: subscriptions across every tenant.
+  - `azure_query`: a Resource Graph (KQL) query, paged up to `top` rows.
+  - `azure_get`: one resource by its ARM id, with the newest stable api-version.
+  - `azure_cost`: actual cost of a subscription, daily or grouped by resource group, service or resource.
+- **The launcher "From an Azure resource…"**: a board of the shown subscription's resources, one column per resource group, after a column of the deployments that failed in the last day. A picked resource starts a session that already knows it, its group's recent deployments and its last day of Activity Log. Granting Azure access, signing a tenant in again and switching subscription are rows on the same board.
+- **A status-bar chip**: which account and tenant Azure is read as, warning when a tenant needs signing in again.
+- **A light watch**: every fifteen minutes, failed deployments, 25 resource groups per round. A new failure lights the launcher and shows a notice.
 
-2. Rename it: `id`, `name` and `description` in `prifly-extension.json`,
-   `name` in `package.json`, and the tool's `template_` prefix in
-   `whoami-tool.ts` (a tool name must be unique across every extension).
+## Access
 
-3. Get the types. They come from `@prifly/extension-api`, prifly's
-   `packages/extension-api`. Until it is published, link it once per machine
-   from your prifly checkout, then install:
+The manifest asks for one Microsoft scope, `https://management.azure.com/user_impersonation`. It is optional, so connecting a Microsoft account for something else never asks for Azure. Pick **Grant Azure access** on the board when you want it.
 
-   ```sh
-   (cd ~/src/prifly/packages/extension-api && bun link)
-   bun install
-   ```
+A guest tenant that demands a fresh sign-in (MFA, a claims challenge) is cut off alone. Your own tenant keeps working, and the board offers **Sign in again to <tenant>**. On a prifly older than per-tenant sign-in, that row signs the whole account in again.
 
-   Once it is on npm, replace `"link:@prifly/extension-api"` in
-   `package.json` with its version.
+The setting **Subscription to show** (a name or an id) fixes the board's subscription. Left empty, the board shows the one you last picked there, else the first enabled one.
 
-4. Commit `bun.lock`. prifly installs a cloned extension's dependencies
-   itself, with `bun install --frozen-lockfile --production --ignore-scripts`,
-   when it clones it and when an update moves it: what the code imports at
-   run time goes under `dependencies`, tooling under `devDependencies`, and
-   the lock must match `package.json`. Install scripts (`postinstall` and the
-   like, yours and your dependencies') are never run, so pick dependencies
-   that work without them.
+## Develop
 
-5. Try it in prifly: link the folder into the extensions folder and enable it
-   in the Extensions dialog.
+```sh
+bun install
+bun test && bun run typecheck && bun run check
+```
 
-   ```sh
-   ln -s ~/src/prifly-ext-<name> ~/.local/share/prifly/extensions/<name>
-   ```
-
-   A linked extension is your own checkout: prifly never updates it or
-   installs into it.
-
-## Checks
-
-`bun test`, `bun run typecheck` and `bun run check` (biome: 500 lines per
-file, 120 per function, cognitive complexity 15, no `any`, no `!`).
-
-## What is where
+The types come from `@prifly/extension-api`, at a tag of `jimmy927/prifly-extension-api`.
 
 | File | What it is |
 |---|---|
-| `prifly-extension.json` | The manifest: `connections` (the accounts it uses and why), a `launch`er and a `panel` |
-| `index.ts` | What prifly imports: `activate(api)` registers the tool; `choices`, `launch` and `panel` answer the launcher and the panel |
-| `whoami-tool.ts` | The MCP tool, `mcp__prifly__template_whoami`: calls Microsoft Graph through `api.connections.fetch`, so prifly holds the token |
-| `things.ts` | The board's items and the session a picked one starts |
-| `panel/` | The panel's page; it fetches `api/things`, answered by `panel` in `index.ts` |
-| `test/fake-api.ts` | A fake `api` that records what the extension shows, logs and registers, and a fake `api.connections` over a fake token endpoint — copy it as it is |
-| `test/index.test.ts` | Tests of the tool, the launcher and the panel against the fakes |
-
-Import prifly's types with `import type`: they are erased, so the host never
-needs the package to run the extension. Everything added to the api after
-its first version is optional (`api.tools?.register`, `api.connections?.list`):
-call it that way, and the extension still loads on an older prifly.
+| `arm.ts` | ARM over `api.connections.fetch`: typed results, paging, the per-tenant sign-in note |
+| `azure.ts` | Each read: tenants, subscriptions, Resource Graph, one resource, costs, deployments, Activity Log |
+| `context.ts` | The chosen account, tenants and subscriptions (kept ten minutes), the shown subscription |
+| `tools.ts` | The five session tools |
+| `board.ts` / `describe.ts` | The launcher's board, its setup rows, and what a picked resource or deployment says |
+| `watch.ts` | The fifteen-minute watch and the status-bar chip |
+| `results.ts` | The words for each kind of failure |
+| `test/fake-arm.ts` | A fake ARM behind a fake `api.connections`: two tenants, one guest, and the ways it can fail |
