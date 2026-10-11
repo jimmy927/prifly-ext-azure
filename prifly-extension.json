@@ -16,7 +16,7 @@
     {
       "id": "resource",
       "label": "From an Azure resource…",
-      "icon": "cloud",
+      "icon": "azure",
       "description": "Resources across your subscriptions, failed deployments first. The session starts knowing the resource, its recent deployments and its Activity Log. Granting access and switching subscription happen here too.",
       "searchPlaceholder": "Filter by name, type, resource group, location or tag…"
     }

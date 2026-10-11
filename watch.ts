@@ -171,7 +171,7 @@ export function chipOf(
   failure: ArmFailure | null,
   context: AzureContext,
 ): Decoration | null {
-  const base = { key: "azure", icon: "cloud" as const, url: "https://portal.azure.com/" };
+  const base = { key: "azure", icon: "azure" as const, url: "https://portal.azure.com/" };
   if (failure?.kind === "not-connected") return null;
   if (failure?.kind === "not-granted") {
     return {

@@ -15,6 +15,7 @@ afterEach(() => stop?.());
 
 const CTX: ExtensionToolContext = {
   session: "fake-session",
+  scratchpad: process.cwd(),
   pick: async () => null,
   signal: new AbortController().signal,
 };
