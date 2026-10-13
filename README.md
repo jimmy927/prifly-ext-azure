@@ -46,3 +46,9 @@ The types come from `@prifly/extension-api`, at a tag of `jimmy927/prifly-extens
 | `watch.ts` | The fifteen-minute watch of failed deployments |
 | `results.ts` | The words for each kind of failure |
 | `test/fake-arm.ts` | A fake ARM behind a fake `api.connections`: two tenants, one guest, and the ways it can fail |
+
+## License and contributing
+
+Source-available under the Functional Source License 1.1 with an Apache 2.0 future license (`LICENSE.md`): use it, change it and fix it freely, but not to offer a competing product. Each version becomes Apache 2.0 two years after its release.
+
+Pull requests are welcome. Before one can be merged, its author signs the contributor agreement (`CLA.md`), which assigns the copyright in the contribution to The Startup Factory AB; the CLA bot asks for it on the pull request.

@@ -1,6 +1,7 @@
 {
   "name": "prifly-ext-azure",
   "private": true,
+  "license": "FSL-1.1-ALv2",
   "type": "module",
   "description": "A prifly extension: your Azure tenants, subscriptions and resources, read through prifly's Microsoft connection.",
   "scripts": {
