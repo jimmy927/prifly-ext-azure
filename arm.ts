@@ -25,12 +25,36 @@ export type ArmFailure =
 
 export type ArmResult<T> = { ok: true; value: T } | { ok: false; failure: ArmFailure };
 
+export const ARM_METHODS = ["GET", "HEAD", "PUT", "PATCH", "POST", "DELETE"] as const;
+export type ArmMethod = (typeof ARM_METHODS)[number];
+
 export type ArmRequest = {
   /** The tenant the token is for; "" for the account's own. */
   tenant?: string;
-  method?: "GET" | "POST";
+  method?: ArmMethod;
   body?: unknown;
 };
+
+/** A successful answer whole: its status, the headers an async operation is followed by, and its body. */
+export type ArmReply = {
+  status: number;
+  /** `azure-asyncoperation`, `location` and `retry-after`, lower-cased, when ARM sent them. */
+  headers: Record<string, string>;
+  /** Parsed JSON; the text when it is not JSON; null when empty (a 202 or a 204). */
+  body: unknown;
+};
+
+const KEPT_HEADERS = ["azure-asyncoperation", "location", "retry-after"];
+
+function bodyOf(text: string): unknown {
+  if (text === "") return null;
+  try {
+    return JSON.parse(text);
+  } catch (error) {
+    if (!(error instanceof SyntaxError)) throw error;
+    return text;
+  }
+}
 
 /** What `fetch` answers when a grant ended; `tenant` only from a prifly that ends tenants alone. */
 type Ended = { needsSignIn: { account: string; tenant?: unknown } };
@@ -93,8 +117,14 @@ export class ArmClient {
     return { ok: false, failure: { kind: "needs-sign-in", connection: id, account, tenant } };
   }
 
-  /** One ARM call: `path` is everything after the host, its `api-version` included. */
+  /** One ARM call, its body only: `path` is everything after the host, its `api-version` included. */
   async request(path: string, how: ArmRequest = {}): Promise<ArmResult<unknown>> {
+    const sent = await this.send(path, how);
+    return sent.ok ? { ok: true, value: sent.value.body } : sent;
+  }
+
+  /** One ARM call, its status and async-operation headers kept beside the body. */
+  async send(path: string, how: ArmRequest = {}): Promise<ArmResult<ArmReply>> {
     const tenant = how.tenant ?? "";
     if (tenant !== "" && this.tenantsNeedingSignIn().includes(tenant)) return this.ended(tenant);
     const init: RequestInit = { method: how.method ?? "GET" };
@@ -109,7 +139,13 @@ export class ArmClient {
     });
     if ("needsSignIn" in answer) return this.signInEnded(answer, tenant);
     if (!answer.ok) return armError(answer);
-    return { ok: true, value: await answer.json() };
+    const headers: Record<string, string> = {};
+    for (const name of KEPT_HEADERS) {
+      const value = answer.headers.get(name);
+      if (value !== null) headers[name] = value;
+    }
+    const body = bodyOf(await answer.text());
+    return { ok: true, value: { status: answer.status, headers, body } };
   }
 
   private signInEnded(answer: Ended, asked: string): ArmResult<never> {

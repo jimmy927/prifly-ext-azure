@@ -3,7 +3,7 @@
   "private": true,
   "license": "FSL-1.1-ALv2",
   "type": "module",
-  "description": "A prifly extension: your Azure tenants, subscriptions and resources, read through prifly's Microsoft connection.",
+  "description": "A prifly extension: tools for every session to read Azure and, after a confirm card, change it, through prifly's Microsoft connection.",
   "scripts": {
     "test": "bun test",
     "typecheck": "tsc --noEmit",
@@ -11,7 +11,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.14",
-    "@prifly/extension-api": "git+ssh://git@github.com/jimmy927/prifly-extension-api.git#v0.5.0",
+    "@prifly/extension-api": "git+ssh://git@github.com/jimmy927/prifly-extension-api.git#v0.6.0",
     "@types/bun": "^1.1.14",
     "typescript": "^7.0.2"
   }

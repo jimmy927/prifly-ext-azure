@@ -1,33 +1,16 @@
 {
   "id": "azure",
   "name": "Azure",
-  "description": "Your Azure tenants, subscriptions and resources in prifly, read through your connected Microsoft account: read-only tools for every session, a board to start a session from a resource or a failed deployment. No az CLI needed.",
-  "version": "0.1.0",
+  "description": "Your Azure tenants, subscriptions and resources for every prifly session, through your connected Microsoft account: read anything at once, and create, change or delete resources once you confirm each change on a card. No az CLI needed.",
+  "version": "0.2.0",
   "main": "index.ts",
+  "prompt": "prompt.md",
   "connections": [
     {
       "provider": "microsoft",
       "scopes": ["https://management.azure.com/user_impersonation"],
       "optional": true,
-      "why": "Reads your Azure tenants, subscriptions, resources, deployments, Activity Log and costs. Read-only: it changes nothing in Azure. Asked for only when you pick Grant Azure access on the board."
-    }
-  ],
-  "launch": [
-    {
-      "id": "resource",
-      "label": "From an Azure resource…",
-      "icon": "azure",
-      "description": "Resources across your subscriptions, failed deployments first. The session starts knowing the resource, its recent deployments and its Activity Log. Granting access and switching subscription happen here too.",
-      "searchPlaceholder": "Filter by name, type, resource group, location or tag…"
-    }
-  ],
-  "settings": [
-    {
-      "id": "subscription",
-      "label": "Subscription to show",
-      "description": "Its name or id. Left empty, the board shows the one you last picked there, else the first enabled one.",
-      "type": "string",
-      "default": ""
+      "why": "Reads your Azure tenants, subscriptions, resources and costs, and makes the changes you confirm on a card (create, update or delete a resource, any other ARM call). Asked for the first time a session needs Azure."
     }
   ]
 }

@@ -1,61 +1,28 @@
 /**
- * The tools every session sees as `mcp__prifly__azure_*`. Read-only: nothing
- * here changes Azure. Each answers text — JSON for rows, a sentence for a
- * failure (`results.ts`) — and never throws for what ARM said.
+ * The tools every session sees as `mcp__prifly__azure_*`. The reads here run
+ * at once; the writes (`writes.ts`) ask on a confirm card first. Each answers
+ * text — JSON for rows, a sentence for a failure — and never throws for what
+ * ARM said.
  */
 
 import type { ExtensionTool } from "@prifly/extension-api";
-import type { ArmClient, ArmResult } from "./arm";
 import { costs, resource, resourceGraph, subscriptionOf } from "./azure";
-import type { AzureContext, Reach } from "./context";
-import { failureText } from "./results";
+import { docsTool } from "./docs";
+import { answer, arg, type Kit, tenantFor, withReach } from "./kit";
+import { failureText, jsonText } from "./results";
+import { waitTool } from "./wait";
+import { apiTool, deleteTool, putTool } from "./writes";
 
-/** Longer answers are cut here, with a note: a session's context is not a dump. */
-const MAX_TEXT = 60_000;
-
-function text(value: unknown, note = ""): string {
-  const body = JSON.stringify(value, null, 1);
-  const cut =
-    body.length > MAX_TEXT ? `${body.slice(0, MAX_TEXT)}\n… cut at ${MAX_TEXT} characters` : body;
-  return note === "" ? cut : `${note}\n${cut}`;
-}
-
-function arg(args: Record<string, unknown>, name: string): string {
-  const value = args[name];
-  return typeof value === "string" ? value.trim() : "";
-}
-
-/** Run `body` with the account's client and what it reaches, or say why not. */
-async function withReach(
-  context: AzureContext,
-  body: (arm: ArmClient, reach: Reach[]) => Promise<string>,
-): Promise<string> {
-  const client = context.client();
-  if (!client.ok) return failureText(client.failure);
-  const reach = await context.reach(client.value);
-  if (!reach.ok) return failureText(reach.failure);
-  return body(client.value, reach.value);
-}
-
-function answer<T>(result: ArmResult<T>, render: (value: T) => string): string {
-  return result.ok ? render(result.value) : failureText(result.failure);
-}
-
-/** The tenant a subscription is in, "" (the account's own) when it is not among the reached. */
-function tenantFor(context: AzureContext, reach: Reach[], subscription: string): string {
-  return context.tenantOf(reach, subscription)?.id ?? "";
-}
-
-function tenantsTool(context: AzureContext): ExtensionTool {
+function tenantsTool(kit: Kit): ExtensionTool {
   return {
     name: "azure_tenants",
     description:
       "Lists the Azure tenants the reader's Microsoft account reaches, with how many subscriptions each gives and whether a tenant needs a fresh sign-in.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
     call: () =>
-      withReach(context, async (arm, reach) => {
+      withReach(kit, async (arm, reach) => {
         const dead = new Set(arm.tenantsNeedingSignIn());
-        return text(
+        return jsonText(
           reach.map((each) => ({
             tenant: each.tenant.id,
             name: each.tenant.name,
@@ -63,8 +30,9 @@ function tenantsTool(context: AzureContext): ExtensionTool {
             subscriptions: each.subscriptions.length,
             ...(dead.has(each.tenant.id) || each.failure !== null
               ? {
-                  problem:
-                    each.failure === null ? "needs a fresh sign-in" : failureText(each.failure),
+                  problem: `${
+                    each.failure === null ? "needs a fresh sign-in" : failureText(each.failure)
+                  } Call azure_subscriptions with this tenant to open its sign-in page.`,
                 }
               : {}),
           })),
@@ -74,11 +42,11 @@ function tenantsTool(context: AzureContext): ExtensionTool {
   };
 }
 
-function subscriptionsTool(context: AzureContext): ExtensionTool {
+function subscriptionsTool(kit: Kit): ExtensionTool {
   return {
     name: "azure_subscriptions",
     description:
-      "Lists the Azure subscriptions the reader can reach, across every tenant (or one tenant, by id): name, id, state and tenant.",
+      "Lists the Azure subscriptions the reader can reach, across every tenant (or one tenant, by id): name, id, state and tenant. Given a tenant whose sign-in ended, it opens that tenant's sign-in page.",
     inputSchema: {
       type: "object",
       properties: {
@@ -87,23 +55,25 @@ function subscriptionsTool(context: AzureContext): ExtensionTool {
       additionalProperties: false,
     },
     call: (args) =>
-      withReach(context, async (_arm, reach) => {
+      withReach(kit, async (_arm, reach) => {
         const only = arg(args, "tenant");
+        const failed = reach.find((each) => each.tenant.id === only)?.failure ?? null;
+        if (only !== "" && failed !== null) return kit.access.explain(failed);
         const rows = reach
           .filter((each) => only === "" || each.tenant.id === only)
           .flatMap((each) =>
             each.subscriptions.map((sub) => ({ ...sub, tenantName: each.tenant.name })),
           );
-        return text(rows);
+        return jsonText(rows);
       }),
   };
 }
 
-function queryTool(context: AzureContext): ExtensionTool {
+function queryTool(kit: Kit): ExtensionTool {
   return {
     name: "azure_query",
     description:
-      "Runs an Azure Resource Graph query (KQL) over the reader's resources, e.g. `resources | where type =~ 'microsoft.web/sites' | project name, resourceGroup, location`. Tables: resources, resourcecontainers, advisorresources, healthresources and the rest of Resource Graph's. Read-only.",
+      "Runs an Azure Resource Graph query (KQL) over the reader's resources, e.g. `resources | where type =~ 'microsoft.compute/virtualmachines' | project name, resourceGroup, location`. Tables: resources, resourcecontainers, advisorresources, healthresources and the rest of Resource Graph's. A read: runs at once.",
     inputSchema: {
       type: "object",
       properties: {
@@ -124,20 +94,20 @@ function queryTool(context: AzureContext): ExtensionTool {
       additionalProperties: false,
     },
     call: (args) =>
-      withReach(context, async (arm, reach) => {
+      withReach(kit, async (arm, reach) => {
         const kql = arg(args, "kql");
         if (kql === "") return "Give a KQL query in `kql`.";
         const subs = Array.isArray(args["subscriptions"])
           ? args["subscriptions"].filter((each): each is string => typeof each === "string")
           : [];
-        const tenant = arg(args, "tenant") || tenantFor(context, reach, subs[0] ?? "");
+        const tenant = arg(args, "tenant") || tenantFor(kit, reach, subs[0] ?? "");
         const top =
           typeof args["top"] === "number"
             ? Math.max(1, Math.min(5000, Math.floor(args["top"])))
             : 200;
         const result = await resourceGraph(arm, { query: kql, subscriptions: subs, tenant, top });
-        return answer(result, (value) =>
-          text(
+        return answer(kit, result, (value) =>
+          jsonText(
             value.rows,
             `${value.rows.length} rows${value.truncated ? `, more exist: raise top or narrow the query` : ""}.`,
           ),
@@ -146,7 +116,7 @@ function queryTool(context: AzureContext): ExtensionTool {
   };
 }
 
-function getTool(context: AzureContext): ExtensionTool {
+function getTool(kit: Kit): ExtensionTool {
   return {
     name: "azure_get",
     description:
@@ -161,13 +131,13 @@ function getTool(context: AzureContext): ExtensionTool {
       additionalProperties: false,
     },
     call: (args) =>
-      withReach(context, async (arm, reach) => {
+      withReach(kit, async (arm, reach) => {
         const id = arg(args, "id");
         if (!id.startsWith("/subscriptions/"))
           return "Give the resource's ARM id, starting /subscriptions/.";
-        const tenant = tenantFor(context, reach, subscriptionOf(id));
-        return answer(await resource(arm, id, arg(args, "apiVersion"), tenant), (value) =>
-          text(value),
+        const tenant = tenantFor(kit, reach, subscriptionOf(id));
+        return answer(kit, await resource(arm, id, arg(args, "apiVersion"), tenant), (value) =>
+          jsonText(value),
         );
       }),
   };
@@ -175,11 +145,11 @@ function getTool(context: AzureContext): ExtensionTool {
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-function costTool(context: AzureContext, now: () => number): ExtensionTool {
+function costTool(kit: Kit): ExtensionTool {
   return {
     name: "azure_cost",
     description:
-      "Actual Azure cost of one subscription over a period (default the last 30 days): one row a day, or one row per resource group, service or resource with groupBy.",
+      "Actual Azure cost (the billing so far) of one subscription over a period (default the last 30 days): one row a day, or one row per resource group, service or resource with groupBy. For the latest billing, call it per subscription from azure_subscriptions.",
     inputSchema: {
       type: "object",
       properties: {
@@ -192,12 +162,12 @@ function costTool(context: AzureContext, now: () => number): ExtensionTool {
       additionalProperties: false,
     },
     call: (args) =>
-      withReach(context, async (arm, reach) => {
+      withReach(kit, async (arm, reach) => {
         const subscription = arg(args, "subscription");
         const day = (ms: number) => new Date(ms).toISOString().slice(0, 10);
-        const from = arg(args, "from") || day(now() - 30 * DAY_MS);
-        const to = arg(args, "to") || day(now());
-        const tenant = tenantFor(context, reach, subscription);
+        const from = arg(args, "from") || day(kit.now() - 30 * DAY_MS);
+        const to = arg(args, "to") || day(kit.now());
+        const tenant = tenantFor(kit, reach, subscription);
         const result = await costs(arm, {
           subscription,
           from,
@@ -205,19 +175,24 @@ function costTool(context: AzureContext, now: () => number): ExtensionTool {
           groupBy: arg(args, "groupBy"),
           tenant,
         });
-        return answer(result, (value) =>
-          text(value, `Actual cost of ${subscription}, ${from} to ${to}.`),
+        return answer(kit, result, (value) =>
+          jsonText(value, `Actual cost of ${subscription}, ${from} to ${to}.`),
         );
       }),
   };
 }
 
-export function azureTools(context: AzureContext, now: () => number = Date.now): ExtensionTool[] {
+export function azureTools(kit: Kit): ExtensionTool[] {
   return [
-    tenantsTool(context),
-    subscriptionsTool(context),
-    queryTool(context),
-    getTool(context),
-    costTool(context, now),
+    tenantsTool(kit),
+    subscriptionsTool(kit),
+    queryTool(kit),
+    getTool(kit),
+    costTool(kit),
+    putTool(kit),
+    deleteTool(kit),
+    apiTool(kit),
+    waitTool(kit),
+    docsTool(kit),
   ];
 }

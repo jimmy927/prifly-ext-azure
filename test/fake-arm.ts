@@ -1,9 +1,10 @@
 /**
  * A fake Azure Resource Manager behind a fake `api.connections`, for this
  * extension's tests. Two tenants — Northwind (the account's own) and Contoso
- * (a guest tenant) — with a subscription each, ARM's own payload shapes, and
- * switches for what goes wrong: a tenant whose sign-in ended, a 429, an ARM
- * error body. Every request is kept with the tenant it was sent for.
+ * (a guest tenant) — with a subscription each, ARM's own payload shapes, a
+ * storage account to create and delete, and switches for what goes wrong: a
+ * tenant whose sign-in ended, a 429, an ARM error body. Every request is kept
+ * with the tenant it was sent for, and every sign-in asked for.
  */
 
 import type {
@@ -18,7 +19,9 @@ export const GUEST = "t-guest";
 export const SUB_PROD = "sub-prod";
 export const SUB_GUEST = "sub-guest";
 export const APP_ID = `/subscriptions/${SUB_PROD}/resourceGroups/rg-shop-prod/providers/Microsoft.Web/sites/app-checkout-api`;
-export const DEPLOY_ID = `/subscriptions/${SUB_PROD}/resourceGroups/rg-shop-prod/providers/Microsoft.Resources/deployments/checkout-api-2026`;
+export const STORAGE_ID = `/subscriptions/${SUB_PROD}/resourceGroups/rg-data/providers/Microsoft.Storage/storageAccounts/stdata`;
+export const ASYNC_OP = `https://management.azure.com/subscriptions/${SUB_PROD}/providers/Microsoft.Storage/locations/westeurope/asyncoperations/op-1?api-version=2023-05-01`;
+export const LOCATION_OP = `https://management.azure.com/subscriptions/${SUB_PROD}/providers/Microsoft.Storage/locations/westeurope/operationresults/op-2?api-version=2023-05-01`;
 
 export type Sent = { method: string; path: string; tenant: string; body: unknown };
 
@@ -27,14 +30,14 @@ export type FakeArmOptions = {
   scopes?: string[];
   /** No Microsoft account at all. */
   none?: boolean;
+  /** The whole account's sign-in ended. */
+  ended?: boolean;
   /** Tenants whose sign-in ended; `fetch` answers needsSignIn for them. */
   deadTenants?: string[];
   /** An older prifly: needsSignIn carries no tenant. */
   oldHost?: boolean;
   /** Answer a path (method + path, query included) with this instead, before the fake's own. */
   override?: (sent: Sent) => Response | null;
-  /** The deployment failures, by resource group; read on every request, so a test may change it. */
-  failures?: () => Record<string, { name: string; timestamp: string; message: string }[]>;
 };
 
 export type FakeArm = {
@@ -43,9 +46,11 @@ export type FakeArm = {
   signIns: { scopes: string[]; options: Record<string, unknown> }[];
   /** Paths sent, without query, in order. */
   paths: () => string[];
+  /** The requests that were not GET. */
+  writes: () => Sent[];
 };
 
-const json = (value: unknown) => Response.json(value);
+const json = (value: unknown, init?: ResponseInit) => Response.json(value, init);
 
 function tenants(): Response {
   return json({
@@ -91,80 +96,39 @@ const RESOURCES = [
     location: "westeurope",
     tags: {},
   },
-  {
-    id: `/subscriptions/${SUB_PROD}/resourceGroups/rg-signing/providers/Microsoft.CodeSigning/codeSigningAccounts/ts-signing`,
-    name: "ts-signing",
-    type: "microsoft.codesigning/codesigningaccounts",
-    resourceGroup: "rg-signing",
-    location: "westeurope",
-    tags: {},
-  },
 ];
 
-function graph(body: unknown): Response {
-  const query = String((body as { query?: unknown }).query ?? "");
-  if (query.startsWith("resourcecontainers")) {
-    return json({
-      data: [
-        { name: "rg-shop-prod", subscriptionId: SUB_PROD },
-        { name: "rg-signing", subscriptionId: SUB_PROD },
-      ],
-    });
+function storage(sent: Sent): Response {
+  if (sent.method === "PUT") {
+    return json(
+      { id: STORAGE_ID, name: "stdata", properties: { provisioningState: "Creating" } },
+      { status: 201, headers: { "Azure-AsyncOperation": ASYNC_OP, "Retry-After": "5" } },
+    );
   }
-  return json({ data: RESOURCES, totalRecords: RESOURCES.length });
+  if (sent.method === "DELETE") {
+    return new Response(null, { status: 202, headers: { Location: LOCATION_OP } });
+  }
+  return json({ id: STORAGE_ID, name: "stdata", properties: { provisioningState: "Succeeded" } });
 }
 
-function deploymentList(path: string, failures: FakeArmOptions["failures"]): Response {
-  const group = /resourcegroups\/([^/]+)/i.exec(path)?.[1] ?? "";
-  const failedOnly = path.includes("provisioningState");
-  const failed = (failures?.()[group] ?? []).map((each) => ({
-    id: `/subscriptions/${SUB_PROD}/resourceGroups/${group}/providers/Microsoft.Resources/deployments/${each.name}`,
-    name: each.name,
-    properties: {
-      provisioningState: "Failed",
-      timestamp: each.timestamp,
-      error: {
-        code: "DeploymentFailed",
-        message: "outer",
-        details: [{ code: "Conflict", message: each.message }],
-      },
-    },
-  }));
-  const ok = failedOnly
-    ? []
-    : [
-        {
-          id: "ok-1",
-          name: "nightly",
-          properties: { provisioningState: "Succeeded", timestamp: "2026-10-10T02:00:00Z" },
-        },
-      ];
-  return json({ value: [...failed, ...ok] });
-}
-
-function route(sent: Sent, options: FakeArmOptions): Response {
+function route(sent: Sent): Response {
   const path = sent.path.split("?")[0] ?? "";
   if (path === "/tenants") return tenants();
   if (path === "/subscriptions") return subscriptions(sent.tenant);
-  if (path === "/providers/Microsoft.ResourceGraph/resources") return graph(sent.body);
-  if (path.endsWith("/providers/Microsoft.Resources/deployments"))
-    return deploymentList(sent.path, options.failures);
-  if (path.endsWith("/operations"))
-    return json({
-      value: [
-        {
-          properties: {
-            provisioningState: "Failed",
-            targetResource: { id: APP_ID },
-            statusMessage: { error: { code: "Conflict", message: "plan at its limit" } },
-          },
-        },
-      ],
-    });
+  if (path === "/providers/Microsoft.ResourceGraph/resources") {
+    return json({ data: RESOURCES, totalRecords: RESOURCES.length });
+  }
   if (path.endsWith("/providers/Microsoft.Web")) {
     return json({
       resourceTypes: [
         { resourceType: "sites", apiVersions: ["2025-01-01-preview", "2024-04-01", "2023-12-01"] },
+      ],
+    });
+  }
+  if (path.endsWith("/providers/Microsoft.Storage")) {
+    return json({
+      resourceTypes: [
+        { resourceType: "storageAccounts", apiVersions: ["2023-05-01", "2023-01-01"] },
       ],
     });
   }
@@ -175,30 +139,17 @@ function route(sent: Sent, options: FakeArmOptions): Response {
       location: "westeurope",
       properties: { state: "Running" },
     });
-  if (path === DEPLOY_ID)
-    return json({
-      id: DEPLOY_ID,
-      name: "checkout-api-2026",
-      properties: { provisioningState: "Failed" },
-    });
-  if (path.endsWith("/eventtypes/management/values")) {
-    return json({
-      value: [
-        {
-          eventTimestamp: "2026-10-11T08:40:00Z",
-          operationName: { localizedValue: "Update website" },
-          status: { value: "Failed" },
-          caller: "ci@northwind.example",
-        },
-      ],
-    });
-  }
+  if (path === STORAGE_ID) return storage(sent);
+  if (path.endsWith("/listKeys")) return json({ keys: [{ keyName: "key1", value: "secret" }] });
   if (path.endsWith("/providers/Microsoft.CostManagement/query")) {
     return json({
       properties: { columns: [{ name: "Cost" }, { name: "UsageDate" }], rows: [[12.5, 20261010]] },
     });
   }
-  return Response.json(
+  if (path.endsWith("/providers/Microsoft.CostManagement/forecast")) {
+    return json({ properties: { columns: [{ name: "Cost" }], rows: [[40]] } });
+  }
+  return json(
     { error: { code: "ResourceNotFound", message: `No ${path} in the fake.` } },
     { status: 404 },
   );
@@ -208,6 +159,8 @@ export function fakeArm(options: FakeArmOptions = {}): FakeArm {
   const sent: Sent[] = [];
   const signIns: FakeArm["signIns"] = [];
   const dead = new Set(options.deadTenants ?? []);
+  let ended = options.ended === true;
+  let none = options.none === true;
   const scopes = options.scopes ?? ["User.Read", ARM_SCOPE];
   const account: ExtensionConnection = {
     id: "ms-1",
@@ -219,12 +172,13 @@ export function fakeArm(options: FakeArmOptions = {}): FakeArm {
   };
   const connections: ExtensionConnectionsApi = {
     list: () =>
-      options.none === true
+      none
         ? []
         : [
             {
               ...account,
               scopes: [...account.scopes],
+              state: ended ? "needs-sign-in" : "ok",
               tenantsNeedingSignIn: options.oldHost === true ? undefined : [...dead],
             } as ExtensionConnection,
           ],
@@ -232,8 +186,8 @@ export function fakeArm(options: FakeArmOptions = {}): FakeArm {
       const url = new URL(typeof request === "string" ? request : request.url);
       const tenant = how.tenant ?? "";
       if (dead.has(tenant)) {
-        const ended = { connection: account.id, provider: "microsoft", account: account.account };
-        return { needsSignIn: options.oldHost === true ? ended : { ...ended, tenant } };
+        const gone = { connection: account.id, provider: "microsoft", account: account.account };
+        return { needsSignIn: options.oldHost === true ? gone : { ...gone, tenant } };
       }
       const body = typeof how.body === "string" ? JSON.parse(how.body) : null;
       const one: Sent = {
@@ -243,7 +197,7 @@ export function fakeArm(options: FakeArmOptions = {}): FakeArm {
         body,
       };
       sent.push(one);
-      return options.override?.(one) ?? route(one, options);
+      return options.override?.(one) ?? route(one);
     },
     async token() {
       return { token: "fake" };
@@ -253,6 +207,8 @@ export function fakeArm(options: FakeArmOptions = {}): FakeArm {
       for (const scope of asked) if (!account.scopes.includes(scope)) account.scopes.push(scope);
       const tenant = (how as { tenant?: string }).tenant;
       if (tenant !== undefined) dead.delete(tenant);
+      ended = false;
+      none = false;
       return { ok: true, connection: account.id, account: account.account };
     },
   };
@@ -261,5 +217,6 @@ export function fakeArm(options: FakeArmOptions = {}): FakeArm {
     sent,
     signIns,
     paths: () => sent.map((each) => each.path.split("?")[0] ?? ""),
+    writes: () => sent.filter((each) => each.method !== "GET"),
   };
 }

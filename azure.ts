@@ -8,25 +8,16 @@ import type { ArmClient, ArmResult } from "./arm";
 
 export type Tenant = { id: string; name: string; domain: string };
 export type Subscription = { id: string; name: string; state: string; tenant: string };
-export type Deployment = {
-  id: string;
-  name: string;
-  resourceGroup: string;
-  subscription: string;
-  state: string;
-  timestamp: string;
-  error: string;
-};
 
-type Json = Record<string, unknown>;
+export type Json = Record<string, unknown>;
 
-function obj(value: unknown): Json {
+export function obj(value: unknown): Json {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Json)
     : {};
 }
 
-function str(value: unknown): string {
+export function str(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
 
@@ -220,69 +211,4 @@ export async function costs(
     const rows = Array.isArray(properties["rows"]) ? properties["rows"].filter(Array.isArray) : [];
     return { columns, rows: rows as unknown[][] };
   });
-}
-
-function deploymentOf(row: unknown, subscription: string, group: string): Deployment {
-  const each = obj(row);
-  const properties = obj(each["properties"]);
-  const error = obj(properties["error"]);
-  const details = Array.isArray(error["details"]) ? error["details"].map(obj) : [];
-  const first = details[0];
-  const words =
-    first === undefined ? str(error["message"]) : `${str(first["code"])}: ${str(first["message"])}`;
-  return {
-    id: str(each["id"]),
-    name: str(each["name"]),
-    resourceGroup: group,
-    subscription,
-    state: str(properties["provisioningState"]),
-    timestamp: str(properties["timestamp"]),
-    error: words,
-  };
-}
-
-/** A resource group's deployments: the failed ones only, or its latest, newest first. */
-export async function deployments(
-  arm: ArmClient,
-  where: { subscription: string; group: string; tenant: string; failedOnly: boolean; top: number },
-): Promise<ArmResult<Deployment[]>> {
-  const filter = where.failedOnly
-    ? `&$filter=${encodeURIComponent("provisioningState eq 'Failed'")}`
-    : "";
-  const path =
-    `/subscriptions/${where.subscription}/resourcegroups/${encodeURIComponent(where.group)}` +
-    `/providers/Microsoft.Resources/deployments?api-version=2021-04-01&$top=${where.top}${filter}`;
-  const listed = await arm.list(path, { tenant: where.tenant }, where.top);
-  return mapped(listed, (rows) =>
-    rows
-      .map((row) => deploymentOf(row, where.subscription, where.group))
-      .sort((a, b) => b.timestamp.localeCompare(a.timestamp)),
-  );
-}
-
-export type ActivityEvent = { at: string; operation: string; status: string; caller: string };
-
-/** The Activity Log for one resource since `since` (ISO), newest first, at most `top`. */
-export async function activity(
-  arm: ArmClient,
-  where: { id: string; since: string; tenant: string; top: number },
-): Promise<ArmResult<ActivityEvent[]>> {
-  const filter = `eventTimestamp ge '${where.since}' and resourceUri eq '${where.id}'`;
-  const path =
-    `/subscriptions/${subscriptionOf(where.id)}/providers/Microsoft.Insights/eventtypes/management/values` +
-    `?api-version=2015-04-01&$filter=${encodeURIComponent(filter)}`;
-  const listed = await arm.list(path, { tenant: where.tenant }, where.top);
-  return mapped(listed, (rows) =>
-    rows.map((row) => {
-      const each = obj(row);
-      return {
-        at: str(each["eventTimestamp"]),
-        operation:
-          str(obj(each["operationName"])["localizedValue"]) ||
-          str(obj(each["operationName"])["value"]),
-        status: str(obj(each["status"])["value"]),
-        caller: str(each["caller"]),
-      };
-    }),
-  );
 }
