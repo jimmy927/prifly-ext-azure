@@ -8,7 +8,15 @@
 import type { ExtensionTool } from "@prifly/extension-api";
 import { costs, resource, resourceGraph, subscriptionOf } from "./azure";
 import { docsTool } from "./docs";
-import { answer, arg, type Kit, tenantFor, withReach } from "./kit";
+import {
+  answer,
+  arg,
+  emptySubscriptionSegment,
+  type Kit,
+  subscriptionsToAsk,
+  tenantFor,
+  withReach,
+} from "./kit";
 import { failureText, jsonText } from "./results";
 import { waitTool } from "./wait";
 import { apiTool, deleteTool, putTool } from "./writes";
@@ -98,7 +106,10 @@ function queryTool(kit: Kit): ExtensionTool {
         const kql = arg(args, "kql");
         if (kql === "") return "Give a KQL query in `kql`.";
         const subs = Array.isArray(args["subscriptions"])
-          ? args["subscriptions"].filter((each): each is string => typeof each === "string")
+          ? args["subscriptions"]
+              .filter((each): each is string => typeof each === "string")
+              .map((each) => each.trim())
+              .filter((each) => each !== "")
           : [];
         const tenant = arg(args, "tenant") || tenantFor(kit, reach, subs[0] ?? "");
         const top =
@@ -135,6 +146,8 @@ function getTool(kit: Kit): ExtensionTool {
         const id = arg(args, "id");
         if (!id.startsWith("/subscriptions/"))
           return "Give the resource's ARM id, starting /subscriptions/.";
+        const empty = emptySubscriptionSegment(id);
+        if (empty !== null) return empty;
         const tenant = tenantFor(kit, reach, subscriptionOf(id));
         return answer(kit, await resource(arm, id, arg(args, "apiVersion"), tenant), (value) =>
           jsonText(value),
@@ -149,35 +162,47 @@ function costTool(kit: Kit): ExtensionTool {
   return {
     name: "azure_cost",
     description:
-      "Actual Azure cost (the billing so far) of one subscription over a period (default the last 30 days): one row a day, or one row per resource group, service or resource with groupBy. For the latest billing, call it per subscription from azure_subscriptions.",
+      "Actual Azure cost (the billing so far) over a period (default the last 30 days): one row a day, or one row per resource group, service or resource with groupBy. Of one subscription, or, with no subscription given, of every subscription the account reaches (one block each, headed by its name and id).",
     inputSchema: {
       type: "object",
       properties: {
-        subscription: { type: "string", description: "The subscription id." },
+        subscription: {
+          type: "string",
+          description: "The subscription id; left out, every subscription the account reaches.",
+        },
         from: { type: "string", description: "First day, YYYY-MM-DD." },
         to: { type: "string", description: "Last day, YYYY-MM-DD." },
         groupBy: { type: "string", enum: ["ResourceGroup", "ServiceName", "ResourceId"] },
       },
-      required: ["subscription"],
       additionalProperties: false,
     },
     call: (args) =>
       withReach(kit, async (arm, reach) => {
-        const subscription = arg(args, "subscription");
+        const asked = subscriptionsToAsk(reach, arg(args, "subscription"));
+        if (typeof asked === "string") return asked;
         const day = (ms: number) => new Date(ms).toISOString().slice(0, 10);
         const from = arg(args, "from") || day(kit.now() - 30 * DAY_MS);
         const to = arg(args, "to") || day(kit.now());
-        const tenant = tenantFor(kit, reach, subscription);
-        const result = await costs(arm, {
-          subscription,
-          from,
-          to,
-          groupBy: arg(args, "groupBy"),
-          tenant,
-        });
-        return answer(kit, result, (value) =>
-          jsonText(value, `Actual cost of ${subscription}, ${from} to ${to}.`),
-        );
+        const blocks: string[] = [];
+        for (const sub of asked) {
+          const result = await costs(arm, {
+            subscription: sub.id,
+            from,
+            to,
+            groupBy: arg(args, "groupBy"),
+            tenant: tenantFor(kit, reach, sub.id),
+          });
+          blocks.push(
+            answer(kit, result, (value) =>
+              jsonText(value, `Actual cost of ${sub.id}, ${from} to ${to}.`),
+            ),
+          );
+        }
+        const [only] = blocks;
+        if (blocks.length === 1 && only !== undefined) return only;
+        return blocks
+          .map((block, index) => `## ${asked[index]?.name} (${asked[index]?.id})\n${block}`)
+          .join("\n\n");
       }),
   };
 }

@@ -17,7 +17,7 @@ Reads, run at once:
 - `azure_subscriptions`: subscriptions across every tenant, or one tenant's.
 - `azure_query`: a Resource Graph (KQL) query, paged up to `top` rows.
 - `azure_get`: one resource by its ARM id, with the newest stable api-version.
-- `azure_cost`: actual cost of a subscription, daily or grouped by resource group, service or resource.
+- `azure_cost`: actual cost of a subscription (or of each one reached, when none is named), daily or grouped by resource group, service or resource.
 - `azure_api_docs`: an operation as Azure's own OpenAPI specs describe it (github.com/Azure/azure-rest-api-specs): the provider's newest stable api-version, and the operation's path, method, parameters and body schema, `$ref`s resolved to a bounded depth and trimmed.
 - `azure_wait_operation`: follows an accepted long-running operation (its Azure-AsyncOperation or Location URL) at its Retry-After pace until it succeeds, fails or is cancelled, or the timeout passes.
 

@@ -6,7 +6,7 @@ Reads run at once:
 - `azure_tenants` and `azure_subscriptions`: what the account reaches.
 - `azure_query`: a Resource Graph (KQL) query across subscriptions, e.g. to list VMs: `resources | where type =~ 'microsoft.compute/virtualmachines' | project name, resourceGroup, location, properties.hardwareProfile.vmSize`.
 - `azure_get`: one resource by its ARM id.
-- `azure_cost`: actual cost of a subscription over a period; for "the latest billing", run it for each subscription (default the last 30 days, or the current month with `from`).
+- `azure_cost`: actual cost over a period (default the last 30 days, or the current month with `from`); for "the latest billing" call it without a subscription and it answers for every subscription the account reaches.
 - `azure_api_docs`: an operation as Azure's own OpenAPI specs describe it: the newest stable api-version, path, method, parameters and body schema.
 - `azure_wait_operation`: follows an operation that a change answered with (201 or 202 and an operation URL) until it succeeds, fails or the wait runs out.
 

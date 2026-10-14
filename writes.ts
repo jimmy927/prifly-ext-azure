@@ -8,7 +8,7 @@
 import type { ExtensionTool } from "@prifly/extension-api";
 import { ARM, ARM_METHODS, type ArmClient, type ArmMethod, type ArmReply } from "./arm";
 import { apiVersionFor, subscriptionOf, typeOf } from "./azure";
-import { arg, type Kit, tenantFor, withReach } from "./kit";
+import { arg, emptySubscriptionSegment, type Kit, tenantFor, withReach } from "./kit";
 import { jsonText } from "./results";
 
 export const CANCELLED = "Not done: you cancelled";
@@ -43,7 +43,7 @@ export function armUrl(given: string): URL | string {
   if (url.protocol !== "https:" || url.host.toLowerCase() !== "management.azure.com") {
     return `Only Azure Resource Manager (https://management.azure.com) is reached here, not ${url.host}.`;
   }
-  return url;
+  return emptySubscriptionSegment(url.pathname) ?? url;
 }
 
 /** The URL of the operation an accepted call runs on, "" when it finished at once. */
@@ -192,6 +192,8 @@ function resourceChange(
 ): Promise<string> {
   return withReach(kit, async (arm, reach) => {
     const id = arg(args, "id");
+    const empty = emptySubscriptionSegment(id);
+    if (empty !== null) return empty;
     const tenant = tenantFor(kit, reach, subscriptionOf(id));
     const given = arg(args, "apiVersion");
     const version = given === "" ? await apiVersionFor(arm, id, tenant) : null;

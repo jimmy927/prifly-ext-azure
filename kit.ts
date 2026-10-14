@@ -3,6 +3,7 @@
 import type { ConfirmSpec } from "@prifly/extension-api";
 import type { Access } from "./access";
 import type { ArmClient, ArmResult } from "./arm";
+import type { Subscription } from "./azure";
 import type { AzureContext, Reach } from "./context";
 import type { SpecLibrary } from "./specs";
 
@@ -55,4 +56,32 @@ export function answer<T>(kit: Kit, result: ArmResult<T>, render: (value: T) => 
 /** The tenant a subscription is in, "" (the account's own) when it is not among the reached. */
 export function tenantFor(kit: Kit, reach: Reach[], subscription: string): string {
   return kit.context.tenantOf(reach, subscription)?.id ?? "";
+}
+
+const NO_SUBSCRIPTIONS =
+  "No Azure subscriptions are reachable with this sign-in, so there is nothing to ask. Check azure_tenants for a tenant that needs a fresh sign-in, or sign in with an account that has a subscription.";
+
+/**
+ * The subscriptions a tool with an optional `subscription` works on: the one
+ * given (blank counts as not given), else every one the account reaches.
+ * Text instead when there is none, so no `/subscriptions//…` is ever sent.
+ */
+export function subscriptionsToAsk(
+  reach: readonly Reach[],
+  given: string,
+): Subscription[] | string {
+  const all = reach.flatMap((each) => each.subscriptions).filter((sub) => sub.id !== "");
+  const wanted = given.trim();
+  if (wanted !== "")
+    return [
+      all.find((sub) => sub.id === wanted) ?? { id: wanted, name: wanted, state: "", tenant: "" },
+    ];
+  return all.length === 0 ? NO_SUBSCRIPTIONS : all;
+}
+
+/** Text when an ARM path has an empty subscription segment (`/subscriptions//…`), else null. */
+export function emptySubscriptionSegment(path: string): string | null {
+  return /\/subscriptions\/(?:%20|\s)*\//i.test(path.split("?")[0] ?? "")
+    ? "The path has an empty subscription id (/subscriptions//…). Find the id with azure_subscriptions."
+    : null;
 }

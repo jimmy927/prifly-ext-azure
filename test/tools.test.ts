@@ -6,7 +6,7 @@ import { typeOf } from "../azure";
 import { AzureContext } from "../context";
 import * as extension from "../index";
 import { fakeApi } from "./fake-api";
-import { APP_ID, fakeArm, GUEST, HOME, SUB_PROD } from "./fake-arm";
+import { APP_ID, fakeArm, GUEST, HOME, SUB_GUEST, SUB_PROD } from "./fake-arm";
 import { harness } from "./harness";
 
 // The module is what prifly imports: it must fit the contract as a whole.
@@ -214,4 +214,78 @@ test("an ARM id names its provider and nested type", () => {
     type: "sites/slots",
   });
   expect(typeOf(`/subscriptions/${SUB_PROD}/resourceGroups/rg`)).toBeNull();
+});
+
+const costRequests = (arm: { sent: { path: string; tenant: string }[] }) =>
+  arm.sent.filter((each) => each.path.includes("CostManagement"));
+
+const NO_SUBS = (sent: { path: string }) =>
+  sent.path.startsWith("/subscriptions?") ? Response.json({ value: [] }) : null;
+
+test("azure_cost with no subscription and one reachable asks that subscription only", async () => {
+  const { call, arm } = harness({ deadTenants: [GUEST] });
+  const text = await call("azure_cost", {});
+  expect(text).toContain(`Actual cost of ${SUB_PROD},`);
+  expect(costRequests(arm).map((each) => each.path)).toEqual([
+    `/subscriptions/${SUB_PROD}/providers/Microsoft.CostManagement/query?api-version=2023-11-01`,
+  ]);
+});
+
+test("azure_cost with no subscription and two reachable answers one block each", async () => {
+  const { call, arm } = harness();
+  const text = await call("azure_cost", {});
+  expect(text).toContain(`## Shop Production (${SUB_PROD})`);
+  expect(text).toContain(`## Contoso Sandbox (${SUB_GUEST})`);
+  expect(costRequests(arm).map((each) => each.path.split("/")[2])).toEqual([SUB_PROD, SUB_GUEST]);
+  expect(costRequests(arm).map((each) => each.tenant)).toEqual([HOME, GUEST]);
+});
+
+test("azure_cost with no reachable subscription says so and sends no cost request", async () => {
+  const { call, arm } = harness({ override: NO_SUBS });
+  const text = await call("azure_cost", {});
+  expect(text).toStartWith("No Azure subscriptions are reachable with this sign-in");
+  expect(costRequests(arm)).toEqual([]);
+});
+
+test("an empty or blank subscription counts as not given", async () => {
+  for (const subscription of ["", "   "]) {
+    const { call, arm } = harness();
+    const text = await call("azure_cost", { subscription });
+    expect(text).toContain(`## Contoso Sandbox (${SUB_GUEST})`);
+    expect(costRequests(arm)).toHaveLength(2);
+    expect(arm.sent.some((each) => each.path.startsWith("/subscriptions//"))).toBe(false);
+  }
+});
+
+test("azure_query drops blank subscription ids instead of posting them", async () => {
+  const { call, arm } = harness();
+  await call("azure_query", { kql: "resources", subscriptions: ["", "  ", SUB_PROD] });
+  const posted = arm.sent.find((each) =>
+    each.path.startsWith("/providers/Microsoft.ResourceGraph"),
+  );
+  expect(posted?.body).toMatchObject({ subscriptions: [SUB_PROD] });
+  await call("azure_query", { kql: "resources", subscriptions: [" "] });
+  const last = arm.sent.at(-1);
+  expect(last?.path).toStartWith("/providers/Microsoft.ResourceGraph");
+  expect(last?.body).toMatchObject({ query: "resources" });
+  expect(last?.body).not.toHaveProperty("subscriptions");
+});
+
+test("a path with an empty subscription segment is refused by every tool that takes one", async () => {
+  const bad = "/subscriptions//resourceGroups/rg/providers/Microsoft.Web/sites/x";
+  const { call, arm, fake } = harness({}, { confirm: true });
+  const operation =
+    "https://management.azure.com/subscriptions//providers/X/operationresults/1?api-version=1";
+  const asks: [string, Record<string, unknown>][] = [
+    ["azure_get", { id: bad }],
+    ["azure_put_resource", { id: bad, body: {}, apiVersion: "2024-04-01" }],
+    ["azure_delete_resource", { id: bad, apiVersion: "2024-04-01" }],
+    ["azure_api", { path: bad, apiVersion: "2024-04-01" }],
+    ["azure_wait_operation", { url: operation }],
+  ];
+  for (const [name, args] of asks) {
+    expect(await call(name, args)).toContain("empty subscription id");
+  }
+  expect(fake.confirms).toEqual([]);
+  expect(arm.sent.some((each) => each.path.includes("/subscriptions//"))).toBe(false);
 });
