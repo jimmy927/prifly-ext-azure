@@ -21,7 +21,7 @@ Reads, run at once:
 - `azure_api_docs`: an operation as Azure's own OpenAPI specs describe it (github.com/Azure/azure-rest-api-specs): the provider's newest stable api-version, and the operation's path, method, parameters and body schema, `$ref`s resolved to a bounded depth and trimmed.
 - `azure_wait_operation`: follows an accepted long-running operation (its Azure-AsyncOperation or Location URL) at its Retry-After pace until it succeeds, fails or is cancelled, or the timeout passes.
 
-Changes, each shown on a confirm card first (method, full URL with api-version, JSON body):
+Changes, each shown on a confirm card first (a plain sentence and the key settings; method, full URL with api-version and JSON body folded under Details):
 
 - `azure_put_resource`: create or update one resource by its id.
 - `azure_delete_resource`: delete one resource by its id.
@@ -56,6 +56,7 @@ The types come from `@prifly/extension-api`, at a tag of `jimmy927/prifly-extens
 | `access.ts` | Why access is missing, and starting the sign-in that fixes it |
 | `kit.ts` | What every tool is built from |
 | `tools.ts` | The read tools, and the list of every tool |
+| `confirm.ts` | The confirm card text: summary, key settings, folded details |
 | `writes.ts` | `azure_api`, `azure_put_resource`, `azure_delete_resource`, and the rule for what confirms |
 | `wait.ts` | `azure_wait_operation` |
 | `docs.ts` / `specs.ts` / `schema.ts` | `azure_api_docs`: finding and reading the specs on GitHub, and resolving their schemas |

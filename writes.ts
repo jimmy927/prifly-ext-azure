@@ -1,13 +1,15 @@
 /**
  * The tools that can change Azure, and the one that reaches any ARM endpoint.
  * Every PUT, PATCH and DELETE, and every POST not on `READ_POSTS`, is shown on
- * a confirm card first (`api.confirm`) with its method, full URL and body;
+ * a confirm card first (`api.confirm`): a plain summary and the key settings
+ * up front, the method, full URL and body folded under Details (`confirm.ts`);
  * cancelled, nothing is sent and the tool answers `CANCELLED`.
  */
 
 import type { ExtensionTool } from "@prifly/extension-api";
 import { ARM, ARM_METHODS, type ArmClient, type ArmMethod, type ArmReply } from "./arm";
-import { apiVersionFor, subscriptionOf, typeOf } from "./azure";
+import { apiVersionFor, subscriptionOf } from "./azure";
+import { cardFor, subscriptionNameIn } from "./confirm";
 import { arg, emptySubscriptionSegment, type Kit, tenantFor, withReach } from "./kit";
 import { jsonText } from "./results";
 
@@ -70,24 +72,23 @@ function replyText(reply: ArmReply): string {
   );
 }
 
-type Call = { method: ArmMethod; url: URL; body: unknown; tenant: string };
+type Call = {
+  method: ArmMethod;
+  url: URL;
+  body: unknown;
+  tenant: string;
+  /** The subscription's display name for the card, "" when not known. */
+  subscriptionName: string;
+};
 
 /** Send one call, asking first when it changes something. */
-async function send(
-  kit: Kit,
-  arm: ArmClient,
-  call: Call,
-  card: { title: string; summary: string },
-): Promise<string> {
+async function send(kit: Kit, arm: ArmClient, call: Call): Promise<string> {
   const path = `${call.url.pathname}${call.url.search}`;
   if (needsConfirm(call.method, call.url.pathname)) {
     if (kit.confirm === undefined) {
       return "Not done: this prifly cannot show a confirm card for a change (update prifly), so nothing was sent.";
     }
-    const body =
-      call.body === undefined ? "(no body)" : (JSON.stringify(call.body, null, 2) ?? "null");
-    const details = `${call.method} ${call.url.toString()}\n\n${body}`;
-    if (!(await kit.confirm({ ...card, details }))) return CANCELLED;
+    if (!(await kit.confirm(cardFor(call)))) return CANCELLED;
   }
   const sent = await arm.send(path, {
     method: call.method,
@@ -150,27 +151,17 @@ export function apiTool(kit: Kit): ExtensionTool {
       }
       return withReach(kit, (arm, reach) => {
         const tenant = arg(args, "tenant") || tenantFor(kit, reach, subscriptionOf(url.pathname));
-        const call = { method: known, url, body: bodyArg(args), tenant };
-        return send(kit, arm, call, {
-          title: "Azure API call",
-          summary: `${known} ${url.pathname}`,
+        const subscriptionName = subscriptionNameIn(reach, subscriptionOf(url.pathname));
+        return send(kit, arm, {
+          method: known,
+          url,
+          body: bodyArg(args),
+          tenant,
+          subscriptionName,
         });
       });
     },
   };
-}
-
-/** "Microsoft.Storage/storageAccounts mystore in rg-data": what a card names. */
-function named(id: string): string {
-  const kind = typeOf(id);
-  const name =
-    id
-      .split("/")
-      .filter((part) => part !== "")
-      .at(-1) ?? id;
-  const group = /\/resourcegroups\/([^/]+)/i.exec(id)?.[1];
-  const what = kind === null ? "" : `${kind.namespace}/${kind.type} `;
-  return `${what}${name}${group === undefined ? "" : ` in ${group}`}`;
 }
 
 const ID_PROPERTY = {
@@ -188,7 +179,6 @@ function resourceChange(
   kit: Kit,
   args: Record<string, unknown>,
   method: "PUT" | "DELETE",
-  card: (id: string) => { title: string; summary: string },
 ): Promise<string> {
   return withReach(kit, async (arm, reach) => {
     const id = arg(args, "id");
@@ -202,7 +192,8 @@ function resourceChange(
     if (typeof url === "string") return url;
     url.searchParams.set("api-version", version?.value ?? given);
     const body = method === "PUT" ? args["body"] : undefined;
-    return send(kit, arm, { method, url, body, tenant }, card(id));
+    const subscriptionName = subscriptionNameIn(reach, subscriptionOf(id));
+    return send(kit, arm, { method, url, body, tenant, subscriptionName });
   });
 }
 
@@ -229,10 +220,7 @@ export function putTool(kit: Kit): ExtensionTool {
       if (typeof body !== "object" || body === null || Array.isArray(body)) {
         return "Give the resource's JSON as an object in body.";
       }
-      return resourceChange(kit, args, "PUT", (id) => ({
-        title: "Create or update an Azure resource",
-        summary: `Create or update ${named(id)}`,
-      }));
+      return resourceChange(kit, args, "PUT");
     },
   };
 }
@@ -252,10 +240,7 @@ export function deleteTool(kit: Kit): ExtensionTool {
       if (!arg(args, "id").startsWith("/subscriptions/")) {
         return "Give the resource's ARM id, starting /subscriptions/.";
       }
-      return resourceChange(kit, args, "DELETE", (id) => ({
-        title: "Delete an Azure resource",
-        summary: `Delete ${named(id)}`,
-      }));
+      return resourceChange(kit, args, "DELETE");
     },
   };
 }

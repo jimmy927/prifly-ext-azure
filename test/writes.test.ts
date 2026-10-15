@@ -103,8 +103,11 @@ for (const each of WRITES) {
     expect(sentAtCard).toBe(0);
     expect(arm.sent.filter(isTheWrite(each))).toHaveLength(1);
     const card = fake.confirms[0] as ConfirmSpec;
-    expect(card.details).toStartWith(`${each.method} https://management.azure.com${each.path}?`);
+    expect(card.details).toStartWith(
+      `Method: ${each.method}\nURL: https://management.azure.com${each.path}?`,
+    );
     expect(card.details).toContain("api-version=");
+    expect(card.details).toContain(`Resource id: `);
     const body = each.args["body"];
     if (body !== undefined) expect(card.details).toContain(JSON.stringify(body, null, 2));
     else expect(card.details).toContain("(no body)");
@@ -198,8 +201,100 @@ test("azure_put_resource with no api-version takes the newest stable one, shown 
   const { call, fake } = harness();
   await call("azure_put_resource", { id: STORAGE_ID, body: BODY });
   expect(fake.confirms[0]?.details).toContain(`${STORAGE_ID}?api-version=2023-05-01`);
+  expect(fake.confirms[0]?.title).toBe("Create or update a storage account");
   expect(fake.confirms[0]?.summary).toBe(
-    "Create or update Microsoft.Storage/storageAccounts stdata in rg-data",
+    "Creates or updates the storage account 'stdata' in resource group 'rg-data' (subscription 'Shop Production').",
+  );
+  expect(fake.confirms[0]?.content).toBe(
+    "Location: westeurope\nSKU: Standard_LRS\nKind: StorageV2",
+  );
+});
+
+test("a delete card says what is removed and that it cannot be undone", async () => {
+  const { call, fake } = harness();
+  await call("azure_delete_resource", { id: STORAGE_ID, apiVersion: "2023-05-01" });
+  const card = fake.confirms[0] as ConfirmSpec;
+  expect(card.title).toBe("Delete a storage account");
+  expect(card.summary).toBe(
+    "Deletes the storage account 'stdata' in resource group 'rg-data' (subscription 'Shop Production').",
+  );
+  expect(card.content).toBe("This removes the storage account 'stdata'. This cannot be undone.");
+});
+
+test("a generic azure_api action is named in plain words from its path", async () => {
+  const { call, fake } = harness();
+  await call("azure_api", {
+    method: "POST",
+    path: `${STORAGE_ID}/listKeys`,
+    apiVersion: "2023-05-01",
+  });
+  const card = fake.confirms[0] as ConfirmSpec;
+  expect(card.title).toBe("Run 'listKeys' on a storage account");
+  expect(card.summary).toBe(
+    "Runs the action 'listKeys' on the storage account 'stdata' in resource group 'rg-data' (subscription 'Shop Production').",
+  );
+});
+
+test("summary and content hold no raw URL or JSON; details holds both", async () => {
+  const body = {
+    ...BODY,
+    tags: { env: "prod" },
+    properties: {
+      accessTier: "Hot",
+      networkAcls: { defaultAction: "Deny", ipRules: ["1.2.3.4"] },
+      customDomain: { name: "https://data.example.com/path" },
+    },
+  };
+  for (const [tool, args] of [
+    ["azure_put_resource", { id: STORAGE_ID, apiVersion: "2023-05-01", body }],
+    ["azure_delete_resource", { id: STORAGE_ID, apiVersion: "2023-05-01" }],
+    ["azure_api", { method: "PUT", path: STORAGE_ID, apiVersion: "2023-05-01", body }],
+  ] as const) {
+    const { call, fake } = harness();
+    await call(tool, args);
+    const card = fake.confirms[0] as ConfirmSpec;
+    for (const text of [card.title, card.summary, card.content ?? ""]) {
+      expect(text).not.toMatch(/https?:\/\//);
+      expect(text).not.toContain("management.azure.com");
+      expect(text).not.toContain("api-version");
+      expect(text).not.toMatch(/[{}"]/);
+      expect(text).not.toContain("/subscriptions/");
+    }
+    expect(card.details).toContain("https://management.azure.com");
+    expect(card.details).toContain(STORAGE_ID);
+    if (tool !== "azure_delete_resource")
+      expect(card.details).toContain('"location": "westeurope"');
+  }
+});
+
+test("the content of a create lists the key settings as Label: value lines", async () => {
+  const { call, fake } = harness();
+  await call("azure_put_resource", {
+    id: STORAGE_ID,
+    apiVersion: "2023-05-01",
+    body: {
+      location: "westeurope",
+      sku: { name: "Standard_LRS", tier: "Standard" },
+      kind: "StorageV2",
+      tags: { env: "prod", team: "data" },
+      properties: {
+        accessTier: "Hot",
+        networkAcls: { defaultAction: "Deny", ipRules: ["1.2.3.4", "5.6.7.8"] },
+        customDomain: { name: "https://data.example.com/path" },
+      },
+    },
+  });
+  expect(fake.confirms[0]?.content).toBe(
+    [
+      "Location: westeurope",
+      "SKU: Standard_LRS, Standard",
+      "Kind: StorageV2",
+      "Tags: env=prod, team=data",
+      "Access tier: Hot",
+      "Network acls default action: Deny",
+      "Network acls ip rules: 1.2.3.4, 5.6.7.8",
+      "Custom domain name: data.example.com",
+    ].join("\n"),
   );
 });
 
